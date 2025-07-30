@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ICS Anomaly Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial; margin: 40px; }
+        h1 { color: #333; }
+        input, select, button { margin: 5px; padding: 5px; }
+        table, th, td { border: 1px solid black; border-collapse: collapse; padding: 5px; }
+        canvas { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>Zero Trust ICS Gateway – Anomaly Detection Dashboard</h1>
+
+    <h3>Submit New ICS Data</h3>
+    <form id="dataForm">
+        <label>Packet Size:</label>
+        <input type="number" id="packet_size" required><br>
+
+        <label>Command Type:</label>
+        <select id="command_type">
+            <option value="READ_COILS">READ_COILS</option>
+            <option value="READ_HOLDING_REGISTERS">READ_HOLDING_REGISTERS</option>
+            <option value="WRITE_SINGLE_COIL">WRITE_SINGLE_COIL</option>
+            <option value="WRITE_MULTIPLE_REGISTERS">WRITE_MULTIPLE_REGISTERS</option>
+        </select>
+
+        <label for="delta_time">Δ Time (0.0 - 1.0):</label>
+        <input type="number" id="delta_time" min="0" step="0.01" />
+
+        <button type="submit">Send</button>
+    </form>
+
+    <h3>Last 100 Records</h3>
+    <table id="historyTable">
+        <thead>
+            <tr>
+                <th>Packet Size</th>
+                <th>Command Type</th>
+                <th>Delta Time</th>
+                <th>Result</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <h3>Detected Anomalies</h3>
+    <table id="anomalyTable">
+        <thead>
+            <tr>
+                <th>Node ID</th>
+                <th>Resource</th>
+                <th>Timestamp</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <h3>📊 Anomaly vs Normal (Pie Chart)</h3>
+    <canvas id="pieChart" width="400" height="200"></canvas>
+
+    <h3>📈 Anomaly Frequency Over Time (Bar Chart)</h3>
+    <canvas id="barChart" width="600" height="300"></canvas>
+
+    <script>
+        const form = document.getElementById("dataForm");
+        const tableBody = document.querySelector("#historyTable tbody");
+
+        const pieCtx = document.getElementById("pieChart").getContext("2d");
+        const barCtx = document.getElementById("barChart").getContext("2d");
+
+        let pieChart = new Chart(pieCtx, {
+            type: "pie",
+            data: {
+                labels: ["Normal", "Anomaly"],
+                datasets: [{
+                    label: "Status",
+                    data: [0, 0],
+                    backgroundColor: ["#4caf50", "#f44336"]
+                }]
+            }
+        });
+
+        let barChart = new Chart(barCtx, {
+            type: "bar",
+            data: {
+                labels: [],
+                datasets: [{
+                    label: "Anomalies per Minute",
+                    data: [],
+                    backgroundColor: "#f44336"
+                }]
+            },
+            options: {
+                scales: {
+                    x: { title: { display: true, text: 'Time (minutes)' } },
+                    y: { title: { display: true, text: 'Anomaly Count' }, beginAtZero: true }
+                }
+            }
+        });
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const packet_size = document.getElementById("packet_size").value;
+            const command_type = document.getElementById("command_type").value;
+            const delta_time = document.getElementById("delta_time").value;
+
+            const response = await fetch("/predict", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ packet_size, command_type, delta_time })
+            });
+
+            const result = await response.json();
+            alert("Prediction: " + result.result);
+
+            loadHistory();
+            loadAnomalies();
+        });
+
+        async function loadHistory() {
+            const response = await fetch("/history");
+            const data = await response.json();
+            tableBody.innerHTML = "";
+
+            let normalCount = 0;
+            let anomalyCount = 0;
+
+            data.reverse().forEach(item => {
+                const row = `<tr>
+                    <td>${item.packet_size}</td>
+                    <td>${item.command_type}</td>
+                    <td>${item.delta_time}</td>
+                    <td>${item.result}</td>
+                </tr>`;
+                tableBody.innerHTML += row;
+
+                if (item.result === "Anomaly" || item.result === -1 || item.result === "-1") {
+                    anomalyCount++;
+                } else {
+                    normalCount++;
+                }
+            });
+
+            // Update pie chart
+            pieChart.data.datasets[0].data = [normalCount, anomalyCount];
+            pieChart.update();
+        }
+
+        async function loadAnomalies() {
+            const response = await fetch("/anomalies");
+            const data = await response.json();
+
+            const anomalyTableBody = document.querySelector("#anomalyTable tbody");
+            anomalyTableBody.innerHTML = "";
+
+            const timeBuckets = {};
+
+            data.forEach(entry => {
+                const row = `<tr>
+                    <td>${entry.node_id}</td>
+                    <td>${entry.resource}</td>
+                    <td>${entry.timestamp}</td>
+                    <td>${entry.status}</td>
+                </tr>`;
+                anomalyTableBody.innerHTML += row;
+
+                // Group anomalies by minute
+                const minute = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                timeBuckets[minute] = (timeBuckets[minute] || 0) + 1;
+            });
+
+            // Update bar chart
+            const labels = Object.keys(timeBuckets);
+            const counts = Object.values(timeBuckets);
+
+            barChart.data.labels = labels;
+            barChart.data.datasets[0].data = counts;
+            barChart.update();
+        }
+
+        // Initial load
+        loadHistory();
+        loadAnomalies();
+
+        // Auto-refresh
+        setInterval(loadHistory, 5000);
+        setInterval(loadAnomalies, 10000);
+    </script>
+</body>
+</html>

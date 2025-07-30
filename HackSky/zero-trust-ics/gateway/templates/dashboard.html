@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ICS Gateway Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+    h1 { color: #333; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #007BFF; color: white; }
+    .stats { margin-top: 20px; font-size: 18px; }
+    canvas { margin-top: 20px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <h1>🔒 ICS Gateway Access Logs</h1>
+
+  <div class="stats">
+    ✅ Access Granted: <strong id="grantedCount">0</strong><br>
+    ❌ Access Denied: <strong id="deniedCount">0</strong>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Node ID</th>
+        <th>IP Address</th>
+        <th>Result</th>
+        <th>Timestamp (UTC)</th>
+      </tr>
+    </thead>
+    <tbody id="logsTableBody">
+      <!-- Rows will be added dynamically -->
+    </tbody>
+  </table>
+
+  <h3>📊 Anomaly Visualization</h3>
+  <canvas id="pieChart" width="400" height="200"></canvas>
+  <canvas id="barChart" width="400" height="200"></canvas>
+
+  <script>
+    let pieChart, barChart;
+
+    async function loadLogs() {
+      const res = await fetch("/logs");
+      const data = await res.json();
+
+      const tbody = document.getElementById("logsTableBody");
+      tbody.innerHTML = ""; // Clear existing rows
+
+      let granted = 0;
+      let denied = 0;
+
+      data.forEach(entry => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${entry.node_id}</td>
+          <td>${entry.ip_address}</td>
+          <td>${entry.result}</td>
+          <td>${entry.timestamp}</td>
+        `;
+        tbody.appendChild(row);
+
+        if (entry.result === "ALLOWED") granted++;
+        else denied++;
+      });
+
+      document.getElementById("grantedCount").innerText = granted;
+      document.getElementById("deniedCount").innerText = denied;
+    }
+
+    async function updateCharts() {
+      const response = await fetch("/history");
+      const data = await response.json();
+
+      const counts = { normal: 0, anomalous: 0 };
+      const timeBuckets = {};
+
+      data.forEach(entry => {
+        counts[entry.result] = (counts[entry.result] || 0) + 1;
+        
+        const hour = new Date().getHours();
+        timeBuckets[hour] = (timeBuckets[hour] || 0) + (entry.result === "anomalous" ? 1 : 0);
+      });
+
+      const pieData = {
+        labels: ["Normal", "Anomalous"],
+        datasets: [{
+          data: [counts.normal, counts.anomalous],
+          backgroundColor: ["#4CAF50", "#F44336"]
+        }]
+      };
+
+      const barData = {
+        labels: Object.keys(timeBuckets),
+        datasets: [{
+          label: "Anomalies per Hour",
+          data: Object.values(timeBuckets),
+          backgroundColor: "#2196F3"
+        }]
+      };
+
+      if (pieChart) pieChart.destroy();
+      if (barChart) barChart.destroy();
+
+      pieChart = new Chart(document.getElementById("pieChart"), { type: "pie", data: pieData });
+      barChart = new Chart(document.getElementById("barChart"), { type: "bar", data: barData });
+    }
+
+    // Load everything on startup and every 10 seconds
+    loadLogs();
+    updateCharts();
+    setInterval(() => {
+      loadLogs();
+      updateCharts();
+    }, 10000);
+  </script>
+
+</body>
+</html>
